@@ -12,12 +12,14 @@ function App() {
   const navigate = useNavigate();
 
   useEffect(() => {
+    // Check if user is logged in
     const checkSession = async () => {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) navigate('/login');
     };
     checkSession();
 
+    // Fetch initial queues
     const fetchQueues = async () => {
       const { data, error } = await supabase
         .from('queues')
@@ -29,6 +31,7 @@ function App() {
     };
     fetchQueues();
 
+    // Fetch initial capacities
     const fetchCapacities = async () => {
       const { data, error } = await supabase.from('config').select('key,value');
       if (error) console.error('Error fetching capacities:', error);
@@ -45,6 +48,7 @@ function App() {
     };
     fetchCapacities();
 
+    // Subscribe to queues
     const queueSubscription = supabase
       .channel('queues')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'queues' }, payload => {
@@ -52,6 +56,7 @@ function App() {
       })
       .subscribe();
 
+    // Subscribe to config
     const configSubscription = supabase
       .channel('config')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'config' }, payload => {
@@ -65,7 +70,7 @@ function App() {
     };
   }, [navigate]);
 
-  const handleCapacityChange = async (zone, value) => {
+  const handleCapacityChange = async (key, value) => {
     if (!Number.isInteger(value) || value < 1) {
       alert('Invalid capacity');
       return;
@@ -74,10 +79,10 @@ function App() {
       const response = await fetch('https://taxi-webhook-server.onrender.com/config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ key: `${zone}_capacity`, value })
+        body: JSON.stringify({ key: `${key}_capacity`, value })
       });
       if (!response.ok) throw new Error('Failed to update capacity');
-      setNewCapacities(prev => ({ ...prev, [zone]: value }));
+      setNewCapacities(prev => ({ ...prev, [key]: value }));
     } catch (error) {
       console.error('Error updating capacity:', error);
       alert('Failed to update capacity');
