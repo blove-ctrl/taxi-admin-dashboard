@@ -97,6 +97,13 @@ function App() {
     }
   };
 
+  const calculateWaitTime = (entryTime) => {
+    const now = new Date();
+    const entry = new Date(entryTime);
+    const diffMs = now - entry;
+    return diffMs > 0 ? Math.floor(diffMs / 60000) : 0; // Minutes, non-negative
+  };
+
   return (
     <div className="container mx-auto p-4">
       <h1 className="text-3xl font-bold mb-4">Taxi Queue Dashboard</h1>
@@ -107,8 +114,8 @@ function App() {
             <p>Occupancy: {queues.filter(q => q.zone === zone).length}/{zone === 'holding' ? '∞' : capacities[zone]}</p>
             <ul>
               {queues.filter(q => q.zone === zone).map(q => (
-                <li key={q.vehicle_name}>
-                  {q.vehicle_name} (#{q.position}, {Math.floor((new Date() - new Date(q.entry_time)) / 60000)} min)
+                <li key={q.vehicle_name} className="my-2">
+                  {q.vehicle_name} (#{q.position}, {calculateWaitTime(q.entry_time)} min)
                   <button
                     onClick={() => suspendVehicle(q.vehicle_name)}
                     className="ml-2 bg-red-500 text-white p-1 rounded"
