@@ -20,17 +20,17 @@ function App() {
     const fetchQueues = async () => {
       const { data, error } = await supabase
         .from('queues')
-        .select('vehicle_name,zone,position,entry_time,status,reason')
+        .select('vehicle_name, zone, position, entry_time, status, reason')
         .eq('status', 'active')
         .order('position', { ascending: true });
-      if (error) console.error('Error fetching queues:', error);
-      else setQueues(data);
+      if (error) console.error('Error fetching queues:', error.message);
+      else setQueues(data || []);
     };
     fetchQueues();
 
     const fetchCapacities = async () => {
-      const { data, error } = await supabase.from('config').select('key,value');
-      if (error) console.error('Error fetching capacities:', error);
+      const { data, error } = await supabase.from('config').select('key, value');
+      if (error) console.error('Error fetching capacities:', error.message);
       else {
         const updated = { staging: 7, blue_loading: 2, red_loading: 3 };
         data.forEach(item => {
@@ -47,6 +47,7 @@ function App() {
     const queueSubscription = supabase
       .channel('queues')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'queues' }, payload => {
+        console.log('Realtime update for queues:', payload);
         fetchQueues();
       })
       .subscribe();
@@ -54,6 +55,7 @@ function App() {
     const configSubscription = supabase
       .channel('config')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'config' }, payload => {
+        console.log('Realtime update for config:', payload);
         fetchCapacities();
       })
       .subscribe();
@@ -66,7 +68,7 @@ function App() {
 
   const handleCapacityChange = async (zone, value) => {
     if (!Number.isInteger(value) || value < 1) {
-      alert('Invalid capacity');
+      alert('Capacity must be a positive integer');
       return;
     }
     try {
@@ -77,6 +79,7 @@ function App() {
       });
       if (!response.ok) throw new Error('Failed to update capacity');
       setNewCapacities(prev => ({ ...prev, [zone]: value }));
+      alert('Capacity updated successfully');
     } catch (error) {
       console.error('Error updating capacity:', error);
       alert('Failed to update capacity');
@@ -84,16 +87,19 @@ function App() {
   };
 
   const suspendVehicle = async (vehicleName) => {
+    console.log('Attempting to suspend vehicle:', vehicleName);
     try {
-      const { error } = await supabase
+      const { data, error } = await supabase
         .from('queues')
         .update({ status: 'suspended', reason: 'Admin suspension' })
-        .eq('vehicle_name', vehicleName);
+        .eq('vehicle_name', vehicleName)
+        .select();
       if (error) throw error;
+      console.log('Suspension successful, updated rows:', data);
       alert('Vehicle suspended');
     } catch (error) {
-      console.error('Error suspending vehicle:', error);
-      alert('Failed to suspend vehicle');
+      console.error('Error suspending vehicle:', error.message, error.details);
+      alert('Failed to suspend vehicle: ' + error.message);
     }
   };
 
@@ -118,7 +124,7 @@ function App() {
                   {q.vehicle_name} (#{q.position}, {calculateWaitTime(q.entry_time)} min)
                   <button
                     onClick={() => suspendVehicle(q.vehicle_name)}
-                    className="ml-2 bg-red-500 text-white p-1 rounded"
+                    className="ml-2 bg-red-500 text-white px-2 py-1 rounded hover:bg-red-600"
                   >
                     Suspend
                   </button>
@@ -131,18 +137,18 @@ function App() {
       <div className="mt-8">
         <h2 className="text-xl font-semibold">Adjust Capacities</h2>
         {['staging', 'blue_loading', 'red_loading'].map(zone => (
-          <div key={zone} className="mt-2">
-            <label className="capitalize">{zone.replace('_', ' ')} Capacity:</label>
+          <div key={zone} className="mt-2 flex items-center">
+            <label className="capitalize mr-2">{zone.replace('_', ' ')} Capacity:</label>
             <input
               type="number"
               min="1"
               value={newCapacities[zone]}
               onChange={e => setNewCapacities(prev => ({ ...prev, [zone]: parseInt(e.target.value) || 1 }))}
-              className="ml-2 border p-1"
+              className="border p-1 w-16 mr-2"
             />
             <button
               onClick={() => handleCapacityChange(zone, newCapacities[zone])}
-              className="ml-2 bg-blue-500 text-white p-1 rounded"
+              className="bg-blue-500 text-white px-2 py-1 rounded hover:bg-blue-600"
             >
               Update
             </button>
