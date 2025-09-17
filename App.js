@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react';
 import { createClient } from '@supabase/supabase-js';
 import { useNavigate } from 'react-router-dom';
-import './App.css';
 
 const supabase = createClient('https://zxuzthjvvscppppynioz.supabase.co', 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp4dXp0aGp2dnNjcHBwcHluaW96Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTgwMTc2MDIsImV4cCI6MjA3MzU5MzYwMn0.16AwInQgpJoFerd4g4SRGIuNFov-xJyxZZMs6COL-D4');
 
@@ -12,14 +11,12 @@ function App() {
   const navigate = useNavigate();
 
   useEffect(() => {
-    // Check if user is logged in
     const checkSession = async () => {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) navigate('/login');
     };
     checkSession();
 
-    // Fetch initial queues
     const fetchQueues = async () => {
       const { data, error } = await supabase
         .from('queues')
@@ -31,7 +28,6 @@ function App() {
     };
     fetchQueues();
 
-    // Fetch initial capacities
     const fetchCapacities = async () => {
       const { data, error } = await supabase.from('config').select('key,value');
       if (error) console.error('Error fetching capacities:', error);
@@ -48,7 +44,6 @@ function App() {
     };
     fetchCapacities();
 
-    // Subscribe to queues
     const queueSubscription = supabase
       .channel('queues')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'queues' }, payload => {
@@ -56,7 +51,6 @@ function App() {
       })
       .subscribe();
 
-    // Subscribe to config
     const configSubscription = supabase
       .channel('config')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'config' }, payload => {
@@ -70,7 +64,7 @@ function App() {
     };
   }, [navigate]);
 
-  const handleCapacityChange = async (key, value) => {
+  const handleCapacityChange = async (zone, value) => {
     if (!Number.isInteger(value) || value < 1) {
       alert('Invalid capacity');
       return;
@@ -79,13 +73,27 @@ function App() {
       const response = await fetch('https://taxi-webhook-server.onrender.com/config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ key: `${key}_capacity`, value })
+        body: JSON.stringify({ key: `${zone}_capacity`, value })
       });
       if (!response.ok) throw new Error('Failed to update capacity');
-      setNewCapacities(prev => ({ ...prev, [key]: value }));
+      setNewCapacities(prev => ({ ...prev, [zone]: value }));
     } catch (error) {
       console.error('Error updating capacity:', error);
       alert('Failed to update capacity');
+    }
+  };
+
+  const suspendVehicle = async (vehicleName) => {
+    try {
+      const { error } = await supabase
+        .from('queues')
+        .update({ status: 'suspended', reason: 'Admin suspension' })
+        .eq('vehicle_name', vehicleName);
+      if (error) throw error;
+      alert('Vehicle suspended');
+    } catch (error) {
+      console.error('Error suspending vehicle:', error);
+      alert('Failed to suspend vehicle');
     }
   };
 
@@ -101,6 +109,12 @@ function App() {
               {queues.filter(q => q.zone === zone).map(q => (
                 <li key={q.vehicle_name}>
                   {q.vehicle_name} (#{q.position}, {Math.floor((new Date() - new Date(q.entry_time)) / 60000)} min)
+                  <button
+                    onClick={() => suspendVehicle(q.vehicle_name)}
+                    className="ml-2 bg-red-500 text-white p-1 rounded"
+                  >
+                    Suspend
+                  </button>
                 </li>
               ))}
             </ul>
