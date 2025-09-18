@@ -6,10 +6,11 @@ const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS
 const supabase = createClient(supabaseUrl, supabaseKey);
 
 const zoneMap = {
-  '254753732': 'holding',
-  '306131222': 'staging',
-  '306414626': 'blue_loading',
-  '306414254': 'red_loading'
+  '254753732': 'holding',    // TPA_HOLDING_LOT
+  '306131222': 'staging',    // TPA_STAGING_LOT
+  '306414626': 'blue_loading', // TPA_BLUE_LOADING
+  '306414254': 'red_loading',  // TPA_RED_LOADING
+  '148969187': 'exit'        // LOADING EXIT (Big Exit)
 };
 
 function App() {
@@ -36,7 +37,10 @@ function App() {
         const vehicleId = event.vehicle_id;
         const zone = zoneMap[event.geofence_id];
         if (zone) {
-          if (event.event_type === 'GeofenceEntry') {
+          if (zone === 'exit' && vehiclePositions.has(vehicleId)) {
+            vehiclePositions.delete(vehicleId);
+            latestEntries.delete(vehicleId);
+          } else if (event.event_type === 'GeofenceEntry') {
             const entryTime = new Date(event.event_time);
             if (!latestEntries.has(vehicleId) || latestEntries.get(vehicleId) < entryTime) {
               latestEntries.set(vehicleId, entryTime);
@@ -59,6 +63,27 @@ function App() {
       const liveVehicles = Array.from(vehiclePositions.values());
       liveVehicles.sort((a, b) => new Date(a.entry_time) - new Date(b.entry_time));
       liveVehicles.forEach((vehicle, index) => vehicle.position = index + 1);
+
+      // Enforce combined loading capacity (max 5 across blue_loading and red_loading)
+      const loadingVehicles = [
+        ...liveVehicles.filter(v => v.zone === 'blue_loading'),
+        ...liveVehicles.filter(v => v.zone === 'red_loading')
+      ];
+      if (loadingVehicles.length > 5) {
+        loadingVehicles.sort((a, b) => new Date(b.entry_time) - new Date(a.entry_time)); // Remove latest entries
+        const toRemove = loadingVehicles.slice(5);
+        toRemove.forEach(v => vehiclePositions.delete(v.vehicle_id));
+        liveVehicles.forEach((v, index) => v.position = index + 1); // Reassign positions
+      }
+
+      // Prioritize 2 per loading zone, allow 3rd to move
+      ['blue_loading', 'red_loading'].forEach(zone => {
+        const zoneVehicles = liveVehicles.filter(v => v.zone === zone);
+        if (zoneVehicles.length > 2) {
+          const extra = zoneVehicles.slice(2);
+          extra.forEach(v => console.log(`Vehicle ${v.vehicle_name} in ${zone} can move to other loading zone`));
+        }
+      });
 
       setVehicles(liveVehicles);
       setLoading(false);
@@ -89,10 +114,9 @@ function App() {
       console.warn('Invalid entry_time:', entryTime);
       return 0;
     }
-    // Convert UTC to EDT by adding 4 hours
-    const entryEDT = new Date(entry.getTime() + 4 * 60 * 60000);
+    const entryEDT = new Date(entry.getTime() + 4 * 60 * 60000); // UTC to EDT
     const diffMs = now - entryEDT;
-    return Math.max(0, Math.floor(diffMs / 60000)); // Minutes, non-negative
+    return Math.max(0, Math.floor(diffMs / 60000));
   };
 
   const vehiclesByZone = {
