@@ -9,13 +9,7 @@ import { useState, useEffect } from 'react';
     '254753732': 'holding',
     '306131222': 'staging',
     '306414626': 'blue_loading',
-    '306414254': 'red_loading',
-    '132705990': null,
-    '148954116': 'blue_loading',
-    '259558294': 'staging',
-    '148969187': null,
-    '306131799': null,
-    '261253437': null
+    '306414254': 'red_loading'
   };
 
   function App() {
@@ -30,39 +24,29 @@ import { useState, useEffect } from 'react';
           .order('event_time', { ascending: false });
 
         if (error) {
-          console.error('Geofence events fetch error:', error);
+          console.error('Error fetching events:', error);
           setLoading(false);
           return;
         }
 
-        const vehiclePositions = new Map();
-        const latestEntries = new Map();
-
+        const vehicleStatus = new Map();
         events.forEach(event => {
           const vehicleId = event.vehicle_id;
           const zone = zoneMap[event.geofence_id];
           if (zone) {
-            if (event.event_type === 'GeofenceEntry') {
-              const entryTime = new Date(event.event_time);
-              if (!latestEntries.has(vehicleId) || latestEntries.get(vehicleId) < entryTime) {
-                latestEntries.set(vehicleId, entryTime);
-                vehiclePositions.set(vehicleId, {
-                  vehicle_name: event.vehicle_name,
-                  zone: zone,
-                  entry_time: event.event_time
-                });
-              }
-            } else if (event.event_type === 'GeofenceExit') {
-              const lastEntryTime = latestEntries.get(vehicleId);
-              if (lastEntryTime && new Date(event.event_time) > lastEntryTime) {
-                vehiclePositions.delete(vehicleId);
-                latestEntries.delete(vehicleId);
-              }
+            if (event.event_type === 'GeofenceEntry' && !vehicleStatus.has(vehicleId)) {
+              vehicleStatus.set(vehicleId, {
+                vehicle_name: event.vehicle_name,
+                zone: zone,
+                entry_time: event.event_time
+              });
+            } else if (event.event_type === 'GeofenceExit' && vehicleStatus.has(vehicleId)) {
+              vehicleStatus.delete(vehicleId);
             }
           }
         });
 
-        const liveVehicles = Array.from(vehiclePositions.values());
+        const liveVehicles = Array.from(vehicleStatus.values());
         liveVehicles.sort((a, b) => new Date(a.entry_time) - new Date(b.entry_time));
         liveVehicles.forEach((vehicle, index) => vehicle.position = index + 1);
 
@@ -75,7 +59,7 @@ import { useState, useEffect } from 'react';
       const subscription = supabase
         .channel('geofence_events')
         .on('postgres_changes', { event: '*', schema: 'public', table: 'geofence_events' }, () => {
-          console.log('Geofence event change detected, refreshing');
+          console.log('Event change detected, refreshing');
           fetchLiveQueues();
         })
         .subscribe();
@@ -86,7 +70,7 @@ import { useState, useEffect } from 'react';
         subscription.unsubscribe();
         clearInterval(interval);
       };
-    }, [zoneMap]);
+    }, []);
 
     const calculateWaitTime = (entryTime) => {
       const now = new Date();
@@ -101,13 +85,6 @@ import { useState, useEffect } from 'react';
       red_loading: vehicles.filter(v => v.zone === 'red_loading'),
     };
 
-    const capacities = {
-      holding: Infinity,
-      staging: 7,
-      blue_loading: 2,
-      red_loading: 3
-    };
-
     if (loading) return <div className="text-center py-10">Loading...</div>;
 
     return (
@@ -117,7 +94,7 @@ import { useState, useEffect } from 'react';
           {['holding', 'staging', 'blue_loading', 'red_loading'].map(zone => (
             <div key={zone} className="p-4 bg-white rounded-lg shadow">
               <h2 className="text-xl font-semibold capitalize">{zone.replace('_', ' ')}</h2>
-              <p className="mb-2">Occupancy: {vehiclesByZone[zone].length}/{capacities[zone]}</p>
+              <p className="mb-2">Occupancy: {vehiclesByZone[zone].length}/{zone === 'holding' ? '∞' : 7}</p>
               <ul className="list-disc pl-5">
                 {vehiclesByZone[zone].length === 0 ? (
                   <li className="text-gray-500">&nbsp;</li>
