@@ -5,96 +5,35 @@ const supabaseUrl = 'https://zxuzthjvvscppppynioz.supabase.co';
 const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp4dXp0aGp2dnNjcHBwcHluaW96Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTgwMTc2MDIsImV4cCI6MjA3MzU5MzYwMn0.16AwInQgpJoFerd4g4SRGIuNFov-xJyxZZMs6COL-D4';
 const supabase = createClient(supabaseUrl, supabaseKey);
 
-const zoneMap = {
-  '254753732': 'holding',    // TPA_HOLDING_LOT
-  '306131222': 'staging',    // TPA_STAGING_LOT
-  '306414626': 'blue_loading', // TPA_BLUE_LOADING
-  '306414254': 'red_loading',  // TPA_RED_LOADING
-  '148969187': 'exit'        // LOADING EXIT (Big Exit)
-};
-
 function App() {
   const [vehicles, setVehicles] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const fetchLiveQueues = async () => {
-      const { data: events, error } = await supabase
-        .from('geofence_events')
+      const { data, error } = await supabase
+        .from('queues')
         .select('*')
-        .order('event_time', { ascending: false });
+        .eq('status', 'active')
+        .order('zone')
+        .order('position');
 
       if (error) {
-        console.error('Geofence events fetch error:', error);
+        console.error('Queues fetch error:', error);
         setLoading(false);
         return;
       }
 
-      const vehiclePositions = new Map();
-      const latestEntries = new Map();
-
-      events.forEach(event => {
-        const vehicleId = event.vehicle_id;
-        const zone = zoneMap[event.geofence_id];
-        if (zone) {
-          if (zone === 'exit' && vehiclePositions.has(vehicleId)) {
-            vehiclePositions.delete(vehicleId);
-            latestEntries.delete(vehicleId);
-          } else if (event.event_type === 'GeofenceEntry') {
-            const entryTime = new Date(event.event_time);
-            if (!latestEntries.has(vehicleId) || latestEntries.get(vehicleId) < entryTime) {
-              latestEntries.set(vehicleId, entryTime);
-              vehiclePositions.set(vehicleId, {
-                vehicle_name: event.vehicle_name,
-                zone: zone,
-                entry_time: event.event_time
-              });
-            }
-          } else if (event.event_type === 'GeofenceExit' && vehiclePositions.has(vehicleId)) {
-            const lastEntryTime = latestEntries.get(vehicleId);
-            if (lastEntryTime && new Date(event.event_time) > lastEntryTime) {
-              vehiclePositions.delete(vehicleId);
-              latestEntries.delete(vehicleId);
-            }
-          }
-        }
-      });
-
-      const liveVehicles = Array.from(vehiclePositions.values());
-      liveVehicles.sort((a, b) => new Date(a.entry_time) - new Date(b.entry_time));
-      liveVehicles.forEach((vehicle, index) => vehicle.position = index + 1);
-
-      // Enforce combined loading capacity (max 5 across blue_loading and red_loading)
-      const loadingVehicles = [
-        ...liveVehicles.filter(v => v.zone === 'blue_loading'),
-        ...liveVehicles.filter(v => v.zone === 'red_loading')
-      ];
-      if (loadingVehicles.length > 5) {
-        loadingVehicles.sort((a, b) => new Date(b.entry_time) - new Date(a.entry_time)); // Remove latest entries
-        const toRemove = loadingVehicles.slice(5);
-        toRemove.forEach(v => vehiclePositions.delete(v.vehicle_id));
-        liveVehicles.forEach((v, index) => v.position = index + 1); // Reassign positions
-      }
-
-      // Prioritize 2 per loading zone, allow 3rd to move
-      ['blue_loading', 'red_loading'].forEach(zone => {
-        const zoneVehicles = liveVehicles.filter(v => v.zone === zone);
-        if (zoneVehicles.length > 2) {
-          const extra = zoneVehicles.slice(2);
-          extra.forEach(v => console.log(`Vehicle ${v.vehicle_name} in ${zone} can move to other loading zone`));
-        }
-      });
-
-      setVehicles(liveVehicles);
+      setVehicles(data || []);
       setLoading(false);
     };
 
     fetchLiveQueues();
 
     const subscription = supabase
-      .channel('geofence_events')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'geofence_events' }, () => {
-        console.log('Geofence event change detected, refreshing');
+      .channel('queues')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'queues' }, () => {
+        console.log('Queue change detected, refreshing');
         fetchLiveQueues();
       })
       .subscribe();
@@ -141,7 +80,7 @@ function App() {
                 <li className="text-gray-500">&nbsp;</li>
               ) : (
                 vehiclesByZone[zone].map(v => (
-                  <li key={v.vehicle_id} className="my-1">
+                  <li key={v.id} className="my-1">
                     {v.vehicle_name} (#{v.position}, {calculateWaitTime(v.entry_time)} min)
                   </li>
                 ))
