@@ -5,35 +5,71 @@ const supabaseUrl = 'https://zxuzthjvvscppppynioz.supabase.co';
 const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp4dXp0aGp2dnNjcHBwcHluaW96Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTgwMTc2MDIsImV4cCI6MjA3MzU5MzYwMn0.16AwInQgpJoFerd4g4SRGIuNFov-xJyxZZMs6COL-D4';
 const supabase = createClient(supabaseUrl, supabaseKey);
 
+const zoneMap = {
+  '254753732': 'holding',
+  '306131222': 'staging',
+  '306414626': 'blue_loading',
+  '306414254': 'red_loading'
+};
+
 function App() {
   const [vehicles, setVehicles] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const fetchLiveQueues = async () => {
-      const { data, error } = await supabase
-        .from('queues')
+      const { data: events, error } = await supabase
+        .from('geofence_events')
         .select('*')
-        .eq('status', 'active')
-        .order('zone')
-        .order('position');
+        .order('event_time', { ascending: false });
 
       if (error) {
-        console.error('Queues fetch error:', error);
+        console.error('Geofence events fetch error:', error);
         setLoading(false);
         return;
       }
 
-      setVehicles(data || []);
+      const vehiclePositions = new Map();
+      const latestEntries = new Map();
+
+      events.forEach(event => {
+        const vehicleId = event.vehicle_id;
+        const zone = zoneMap[event.geofence_id];
+        if (zone) {
+          if (event.event_type === 'GeofenceEntry') {
+            const entryTime = new Date(event.event_time);
+            if (!latestEntries.has(vehicleId) || latestEntries.get(vehicleId) < entryTime) {
+              latestEntries.set(vehicleId, entryTime);
+              vehiclePositions.set(vehicleId, {
+                vehicle_name: event.vehicle_name,
+                zone: zone,
+                entry_time: event.event_time
+              });
+            }
+          } else if (event.event_type === 'GeofenceExit' && vehiclePositions.has(vehicleId)) {
+            const lastEntryTime = latestEntries.get(vehicleId);
+            if (lastEntryTime && new Date(event.event_time) > lastEntryTime) {
+              vehiclePositions.delete(vehicleId);
+              latestEntries.delete(vehicleId);
+            }
+          }
+        }
+      });
+
+      const liveVehicles = Array.from(vehiclePositions.values());
+      liveVehicles.sort((a, b) => new Date(a.entry_time) - new Date(b.entry_time));
+      liveVehicles.forEach((vehicle, index) => vehicle.position = index + 1);
+
+      setVehicles(liveVehicles);
       setLoading(false);
     };
 
     fetchLiveQueues();
 
     const subscription = supabase
-      .channel('queues')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'queues' }, () => {
-        console.log('Queue change detected, refreshing');
+      .channel('geofence_events')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'geofence_events' }, () => {
+        console.log('Geofence event change detected, refreshing');
         fetchLiveQueues();
       })
       .subscribe();
@@ -47,9 +83,16 @@ function App() {
   }, []);
 
   const calculateWaitTime = (entryTime) => {
-    const now = new Date();
-    const entry = new Date(entryTime);
-    return isNaN(entry.getTime()) ? 0 : Math.max(0, Math.floor((now - entry) / 60000));
+    const now = new Date(); // EDT
+    const entry = new Date(entryTime); // UTC
+    if (isNaN(entry.getTime())) {
+      console.warn('Invalid entry_time:', entryTime);
+      return 0;
+    }
+    // Convert UTC to EDT by adding 4 hours
+    const entryEDT = new Date(entry.getTime() + 4 * 60 * 60000);
+    const diffMs = now - entryEDT;
+    return Math.max(0, Math.floor(diffMs / 60000)); // Minutes, non-negative
   };
 
   const vehiclesByZone = {
@@ -74,7 +117,7 @@ function App() {
                 <li className="text-gray-500">&nbsp;</li>
               ) : (
                 vehiclesByZone[zone].map(v => (
-                  <li key={v.id} className="my-1">
+                  <li key={v.vehicle_id} className="my-1">
                     {v.vehicle_name} (#{v.position}, {calculateWaitTime(v.entry_time)} min)
                   </li>
                 ))
