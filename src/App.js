@@ -38,10 +38,11 @@ function App() {
 
       // Reconstruct current positions from events
       const vehiclePositions = {};
+      const processedEntries = new Set();
       events.forEach(event => {
         const vehicleId = event.vehicle_id;
         const zone = zoneMap[event.geofence_id];
-        if (zone && event.event_type === 'GeofenceEntry') {
+        if (zone && event.event_type === 'GeofenceEntry' && !processedEntries.has(`${vehicleId}-${event.event_id}`)) {
           if (!vehiclePositions[vehicleId] || vehiclePositions[vehicleId].entry_time < event.event_time) {
             vehiclePositions[vehicleId] = {
               vehicle_name: event.vehicle_name,
@@ -49,6 +50,7 @@ function App() {
               entry_time: event.event_time,
               event_id: event.event_id
             };
+            processedEntries.add(`${vehicleId}-${event.event_id}`);
           }
         } else if (zone && event.event_type === 'GeofenceExit' && vehiclePositions[vehicleId] && vehiclePositions[vehicleId].event_id === event.event_id) {
           delete vehiclePositions[vehicleId]; // Exit removes from zone
