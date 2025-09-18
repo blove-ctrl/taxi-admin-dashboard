@@ -35,13 +35,13 @@ function App() {
         const vehicleId = event.vehicle_id;
         const zone = zoneMap[event.geofence_id];
         if (zone) {
-          if (event.event_type === 'GeofenceEntry' && !vehiclePositions.has(vehicleId)) {
+          if (event.event_type === 'GeofenceEntry') {
             vehiclePositions.set(vehicleId, {
               vehicle_name: event.vehicle_name,
               zone: zone,
               entry_time: event.event_time
             });
-          } else if (event.event_type === 'GeofenceExit' && vehiclePositions.has(vehicleId)) {
+          } else if (event.event_type === 'GeofenceExit') {
             vehiclePositions.delete(vehicleId);
           }
         }
