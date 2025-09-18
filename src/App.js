@@ -24,7 +24,7 @@ function App() {
         .order('event_time', { ascending: false });
 
       if (error) {
-        console.error('Geofence events fetch error:', error);
+        console.error('Error fetching geofence events:', error);
         setLoading(false);
         return;
       }
@@ -35,13 +35,13 @@ function App() {
         const vehicleId = event.vehicle_id;
         const zone = zoneMap[event.geofence_id];
         if (zone) {
-          if (event.event_type === 'GeofenceEntry') {
+          if (event.event_type === 'GeofenceEntry' && !vehiclePositions.has(vehicleId)) {
             vehiclePositions.set(vehicleId, {
               vehicle_name: event.vehicle_name,
               zone: zone,
               entry_time: event.event_time
             });
-          } else if (event.event_type === 'GeofenceExit') {
+          } else if (event.event_type === 'GeofenceExit' && vehiclePositions.has(vehicleId)) {
             vehiclePositions.delete(vehicleId);
           }
         }
@@ -60,7 +60,7 @@ function App() {
     const subscription = supabase
       .channel('geofence_events')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'geofence_events' }, () => {
-        console.log('Event change detected, refreshing');
+        console.log('Geofence event change detected, refreshing');
         fetchLiveQueues();
       })
       .subscribe();
@@ -97,15 +97,11 @@ function App() {
             <h2 className="text-xl font-semibold capitalize">{zone.replace('_', ' ')}</h2>
             <p className="mb-2">Occupancy: {vehiclesByZone[zone].length}/{zone === 'holding' ? '∞' : 7}</p>
             <ul className="list-disc pl-5">
-              {vehiclesByZone[zone].length === 0 ? (
-                <li className="text-gray-500">&nbsp;</li>
-              ) : (
-                vehiclesByZone[zone].map(v => (
-                  <li key={v.vehicle_id} className="my-1">
-                    {v.vehicle_name} (#{v.position}, {calculateWaitTime(v.entry_time)} min)
-                  </li>
-                ))
-              )}
+              {vehiclesByZone[zone].map(v => (
+                <li key={v.vehicle_id} className="my-1">
+                  {v.vehicle_name} (#{v.position}, {calculateWaitTime(v.entry_time)} min)
+                </li>
+              ))}
             </ul>
           </div>
         ))}
