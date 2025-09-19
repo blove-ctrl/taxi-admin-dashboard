@@ -1,88 +1,112 @@
-import { useState, useEffect } from 'react';
-import { createClient } from '@supabase/supabase-js';
+import { useEffect, useMemo, useState } from "react";
+import { createClient } from "@supabase/supabase-js";
 
-const supabaseUrl = 'https://zxuzthjvvscppppynioz.supabase.co';
-const supabaseKey = '<PUBLIC_ANON_KEY>'; // keep this anon; never service_role in browser
-const supabase = createClient(supabaseUrl, supabaseKey);
+/** ======= CONFIG ======= */
+const SUPABASE_URL = "https://zxuzthjvvscppppynioz.supabase.co";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp4dXp0aGp2dnNjcHBwcHluaW96Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1ODAxNzYwMiwiZXhwIjoyMDczNTkzNjAyfQ.B4Vvd7SqPUXjv5l2SNOsRnisV-fdS9IP8AAFN5w3A9I"; // never service_role in the browser
 
-function App() {
-  const [vehicles, setVehicles] = useState([]);
+const ZONES = ["holding", "staging", "blue_loading", "red_loading"];
+const CAPACITY = { holding: Infinity, staging: 7, blue_loading: 7, red_loading: 7 };
+/** ====================== */
+
+const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+export default function App() {
+  const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [errMsg, setErrMsg] = useState("");
 
   useEffect(() => {
-    let isMounted = true;
+    let mounted = true;
 
-    const fetchLiveQueues = async () => {
+    const fetchActive = async () => {
       const { data, error } = await supabase
-        .from('queues')
-        .select('*')
-        .eq('status', 'active')
-        .order('zone', { ascending: true })
-        .order('position', { ascending: true });
+        .from("queues")
+        .select("id, vehicle_id, vehicle_name, zone, status, position, entry_time")
+        .eq("status", "active")
+        .order("zone", { ascending: true })
+        .order("position", { ascending: true });
 
-      if (!isMounted) return;
+      if (!mounted) return;
       if (error) {
-        console.error('Queues fetch error:', error);
+        console.error("Supabase fetch error:", error);
+        setErrMsg(error.message ?? "Error loading data");
       } else {
-        setVehicles(data || []);
+        setRows(data ?? []);
+        setErrMsg("");
       }
       setLoading(false);
     };
 
-    fetchLiveQueues();
+    fetchActive();
 
+    // Realtime: refetch on any change to active rows
     const channel = supabase
-      .channel('queues-active')
+      .channel("queues-active")
       .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'queues', filter: 'status=eq.active' },
-        () => fetchLiveQueues()
+        "postgres_changes",
+        { event: "*", schema: "public", table: "queues", filter: "status=eq.active" },
+        fetchActive
       )
       .subscribe();
 
-    const interval = setInterval(fetchLiveQueues, 30000);
+    // Gentle polling as a safety net (optional)
+    const interval = setInterval(fetchActive, 30_000);
 
     return () => {
-      isMounted = false;
+      mounted = false;
       supabase.removeChannel(channel);
       clearInterval(interval);
     };
   }, []);
 
-  const calculateWaitTime = (entryTime) => {
-    const now = new Date();
-    const entry = new Date(entryTime);
-    if (isNaN(entry)) return 0;
-    const diffMs = now - entry;
+  const vehiclesByZone = useMemo(() => {
+    const map = Object.fromEntries(ZONES.map((z) => [z, []]));
+    for (const r of rows) {
+      if (map[r.zone]) map[r.zone].push(r);
+    }
+    return map;
+  }, [rows]);
+
+  const waitMins = (iso) => {
+    const t = new Date(iso);
+    if (isNaN(t.getTime())) return 0;
+    const diffMs = Date.now() - t.getTime();
     return Math.max(0, Math.floor(diffMs / 60000));
   };
 
-  const vehiclesByZone = {
-    holding: vehicles.filter(v => v.zone === 'holding'),
-    staging: vehicles.filter(v => v.zone === 'staging'),
-    blue_loading: vehicles.filter(v => v.zone === 'blue_loading'),
-    red_loading: vehicles.filter(v => v.zone === 'red_loading'),
-  };
-
-  if (loading) return <div className="text-center py-10">Loading...</div>;
+  if (loading) {
+    return <div className="text-center py-10">Loading...</div>;
+  }
 
   return (
     <div className="container mx-auto p-4">
       <h1 className="text-3xl font-bold mb-4 text-center">Taxi Queue Dashboard</h1>
+
+      {errMsg && (
+        <div className="mb-4 p-3 rounded bg-red-50 text-red-700 text-sm">
+          {errMsg}
+        </div>
+      )}
+
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        {['holding', 'staging', 'blue_loading', 'red_loading'].map(zone => (
+        {ZONES.map((zone) => (
           <div key={zone} className="p-4 bg-white rounded-lg shadow">
-            <h2 className="text-xl font-semibold capitalize">{zone.replace('_', ' ')}</h2>
+            <h2 className="text-xl font-semibold capitalize">
+              {zone.replaceAll("_", " ")}
+            </h2>
             <p className="mb-2">
-              Occupancy: {vehiclesByZone[zone].length}/{zone === 'holding' ? '∞' : 7}
+              Occupancy: {vehiclesByZone[zone].length}/
+              {CAPACITY[zone] === Infinity ? "∞" : CAPACITY[zone]}
             </p>
-            <ul className="list-disc pl-5 min-h-6">
+
+            <ul className="list-disc pl-5">
               {vehiclesByZone[zone].length === 0 ? (
                 <li className="text-gray-500">No vehicles</li>
               ) : (
-                vehiclesByZone[zone].map(v => (
-                  <li key={v.id} className="my-1">
-                    {v.vehicle_name} (#{v.position}, {calculateWaitTime(v.entry_time)} min)
+                vehiclesByZone[zone].map((v) => (
+                  <li key={v.id ?? `${v.vehicle_id}-${v.entry_time}`} className="my-1">
+                    {v.vehicle_name} (#{v.position}, {waitMins(v.entry_time)} min)
                   </li>
                 ))
               )}
@@ -93,5 +117,3 @@ function App() {
     </div>
   );
 }
-
-export default App;

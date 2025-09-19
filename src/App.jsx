@@ -1,130 +1,119 @@
-import { useState, useEffect } from 'react';
-import { createClient } from '@supabase/supabase-js';
-import { useNavigate } from 'react-router-dom';
-import './App.css';
+import { useEffect, useMemo, useState } from "react";
+import { createClient } from "@supabase/supabase-js";
 
-const supabase = createClient('https://zxuzthjvvscppppynioz.supabase.co', 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp4dXp0aGp2dnNjcHBwcHluaW96Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTgwMTc2MDIsImV4cCI6MjA3MzU5MzYwMn0.16AwInQgpJoFerd4g4SRGIuNFov-xJyxZZMs6COL-D4');
+/** ======= CONFIG ======= */
+const SUPABASE_URL = "https://zxuzthjvvscppppynioz.supabase.co";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp4dXp0aGp2dnNjcHBwcHluaW96Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1ODAxNzYwMiwiZXhwIjoyMDczNTkzNjAyfQ.B4Vvd7SqPUXjv5l2SNOsRnisV-fdS9IP8AAFN5w3A9I"; // never service_role in the browser
 
-function App() {
-  const [queues, setQueues] = useState([]);
-  const [capacities, setCapacities] = useState({ staging: 7, blue_loading: 2, red_loading: 3 });
-  const [newCapacities, setNewCapacities] = useState({ staging: 7, blue_loading: 2, red_loading: 3 });
-  const navigate = useNavigate();
+const ZONES = ["holding", "staging", "blue_loading", "red_loading"];
+const CAPACITY = { holding: Infinity, staging: 7, blue_loading: 7, red_loading: 7 };
+/** ====================== */
+
+const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+export default function App() {
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [errMsg, setErrMsg] = useState("");
 
   useEffect(() => {
-    const checkSession = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) navigate('/login');
-    };
-    checkSession();
+    let mounted = true;
 
-    const fetchQueues = async () => {
+    const fetchActive = async () => {
       const { data, error } = await supabase
-        .from('queues')
-        .select('vehicle_name,zone,position,entry_time,status,reason')
-        .eq('status', 'active')
-        .order('position', { ascending: true });
-      if (error) console.error('Error fetching queues:', error);
-      else setQueues(data);
-    };
-    fetchQueues();
+        .from("queues")
+        .select("id, vehicle_id, vehicle_name, zone, status, position, entry_time")
+        .eq("status", "active")
+        .order("zone", { ascending: true })
+        .order("position", { ascending: true });
 
-    const fetchCapacities = async () => {
-      const { data, error } = await supabase.from('config').select('key,value');
-      if (error) console.error('Error fetching capacities:', error);
-      else {
-        const updated = { staging: 7, blue_loading: 2, red_loading: 3 };
-        data.forEach(item => {
-          if (item.key === 'staging_capacity') updated.staging = item.value;
-          if (item.key === 'blue_loading_capacity') updated.blue_loading = item.value;
-          if (item.key === 'red_loading_capacity') updated.red_loading = item.value;
-        });
-        setCapacities(updated);
-        setNewCapacities(updated);
+      if (!mounted) return;
+      if (error) {
+        console.error("Supabase fetch error:", error);
+        setErrMsg(error.message ?? "Error loading data");
+      } else {
+        setRows(data ?? []);
+        setErrMsg("");
       }
+      setLoading(false);
     };
-    fetchCapacities();
 
-    const queueSubscription = supabase
-      .channel('queues')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'queues' }, payload => {
-        fetchQueues();
-      })
+    fetchActive();
+
+    // Realtime: refetch on any change to active rows
+    const channel = supabase
+      .channel("queues-active")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "queues", filter: "status=eq.active" },
+        fetchActive
+      )
       .subscribe();
 
-    const configSubscription = supabase
-      .channel('config')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'config' }, payload => {
-        fetchCapacities();
-      })
-      .subscribe();
+    // Gentle polling as a safety net (optional)
+    const interval = setInterval(fetchActive, 30_000);
 
     return () => {
-      supabase.removeChannel(queueSubscription);
-      supabase.removeChannel(configSubscription);
+      mounted = false;
+      supabase.removeChannel(channel);
+      clearInterval(interval);
     };
-  }, [navigate]);
+  }, []);
 
-  const handleCapacityChange = async (zone, value) => {
-    if (!Number.isInteger(value) || value < 1) {
-      alert('Invalid capacity');
-      return;
+  const vehiclesByZone = useMemo(() => {
+    const map = Object.fromEntries(ZONES.map((z) => [z, []]));
+    for (const r of rows) {
+      if (map[r.zone]) map[r.zone].push(r);
     }
-    try {
-      const response = await fetch('https://taxi-webhook-server.onrender.com/config', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ key: `${zone}_capacity`, value })
-      });
-      if (!response.ok) throw new Error('Failed to update capacity');
-      setNewCapacities(prev => ({ ...prev, [zone]: value }));
-    } catch (error) {
-      console.error('Error updating capacity:', error);
-      alert('Failed to update capacity');
-    }
+    return map;
+  }, [rows]);
+
+  const waitMins = (iso) => {
+    const t = new Date(iso);
+    if (isNaN(t.getTime())) return 0;
+    const diffMs = Date.now() - t.getTime();
+    return Math.max(0, Math.floor(diffMs / 60000));
   };
+
+  if (loading) {
+    return <div className="text-center py-10">Loading...</div>;
+  }
 
   return (
     <div className="container mx-auto p-4">
-      <h1 className="text-3xl font-bold mb-4">Taxi Queue Dashboard</h1>
+      <h1 className="text-3xl font-bold mb-4 text-center">Taxi Queue Dashboard</h1>
+
+      {errMsg && (
+        <div className="mb-4 p-3 rounded bg-red-50 text-red-700 text-sm">
+          {errMsg}
+        </div>
+      )}
+
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        {['holding', 'staging', 'blue_loading', 'red_loading'].map(zone => (
-          <div key={zone} className="p-4 bg-white rounded shadow">
-            <h2 className="text-xl font-semibold capitalize">{zone.replace('_', ' ')}</h2>
-            <p>Occupancy: {queues.filter(q => q.zone === zone).length}/{zone === 'holding' ? '∞' : capacities[zone]}</p>
-            <ul>
-              {queues.filter(q => q.zone === zone).map(q => (
-                <li key={q.vehicle_name}>
-                  {q.vehicle_name} (#{q.position}, {Math.floor((new Date() - new Date(q.entry_time)) / 60000)} min)
-                </li>
-              ))}
+        {ZONES.map((zone) => (
+          <div key={zone} className="p-4 bg-white rounded-lg shadow">
+            <h2 className="text-xl font-semibold capitalize">
+              {zone.replaceAll("_", " ")}
+            </h2>
+            <p className="mb-2">
+              Occupancy: {vehiclesByZone[zone].length}/
+              {CAPACITY[zone] === Infinity ? "∞" : CAPACITY[zone]}
+            </p>
+
+            <ul className="list-disc pl-5">
+              {vehiclesByZone[zone].length === 0 ? (
+                <li className="text-gray-500">No vehicles</li>
+              ) : (
+                vehiclesByZone[zone].map((v) => (
+                  <li key={v.id ?? `${v.vehicle_id}-${v.entry_time}`} className="my-1">
+                    {v.vehicle_name} (#{v.position}, {waitMins(v.entry_time)} min)
+                  </li>
+                ))
+              )}
             </ul>
-          </div>
-        ))}
-      </div>
-      <div className="mt-8">
-        <h2 className="text-xl font-semibold">Adjust Capacities</h2>
-        {['staging', 'blue_loading', 'red_loading'].map(zone => (
-          <div key={zone} className="mt-2">
-            <label className="capitalize">{zone.replace('_', ' ')} Capacity:</label>
-            <input
-              type="number"
-              min="1"
-              value={newCapacities[zone]}
-              onChange={e => setNewCapacities(prev => ({ ...prev, [zone]: parseInt(e.target.value) || 1 }))}
-              className="ml-2 border p-1"
-            />
-            <button
-              onClick={() => handleCapacityChange(zone, newCapacities[zone])}
-              className="ml-2 bg-blue-500 text-white p-1 rounded"
-            >
-              Update
-            </button>
           </div>
         ))}
       </div>
     </div>
   );
 }
-
-export default App;
