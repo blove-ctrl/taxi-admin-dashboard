@@ -50,14 +50,14 @@ import { useState, useEffect } from 'react';
       const now = new Date(); // Local time (EDT)
       const entry = new Date(entryTime); // UTC from Supabase
       if (isNaN(entry.getTime())) {
-        console.warn('Invalid entry_time:', entryTime);
+        console.warn(`Invalid entry_time: ${entryTime}`);
         return 0;
       }
-      // Convert UTC to local time by adjusting for EDT offset (-4 hours from UTC)
-      const entryLocal = new Date(entry.getTime() + (4 * 60 * 60000)); // Add 4 hours
-      const diffMs = now - entryLocal;
+      // Convert UTC entry_time to EDT by adding 4 hours
+      const entryEDT = new Date(entry.getTime() + (4 * 60 * 60000)); // UTC + 4 hours
+      const diffMs = now - entryEDT;
       const waitMinutes = Math.max(0, Math.floor(diffMs / 60000));
-      console.log(`Entry: ${entryTime}, Local: ${entryLocal}, Now: ${now}, Wait: ${waitMinutes} min`);
+      console.log(`Entry: ${entryTime} (UTC), EntryEDT: ${entryEDT}, Now: ${now}, Wait: ${waitMinutes} min`);
       return waitMinutes;
     };
 
