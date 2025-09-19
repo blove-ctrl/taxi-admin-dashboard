@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
   import { createClient } from '@supabase/supabase-js';
 
   const supabaseUrl = 'https://zxuzthjvvscppppynioz.supabase.co';
-  const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp4dXp0aGp2dnNjcHBwcHluaW96Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTgwMTc2MDIsImV4cCI6MjA3MzU5MzYwMn0.16AwInQgpJoFerd4g4SRGIuNFov-xJyxZZMs6COL-D4';
+  const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp4dXp0aGp2dnNjcHBwcHluaW96Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTgwMTc2MDIsImV4cCI6MjA3MzU9MzYwMn0.16AwInQgpJoFerd4g4SRGIuNFov-xJyxZZMs6COL-D4';
   const supabase = createClient(supabaseUrl, supabaseKey);
 
   function App() {
@@ -47,15 +47,18 @@ import { useState, useEffect } from 'react';
     }, []);
 
     const calculateWaitTime = (entryTime) => {
-      const now = new Date(); // EDT
-      const entry = new Date(entryTime); // UTC
+      const now = new Date(); // Local time (EDT)
+      const entry = new Date(entryTime); // UTC from Supabase
       if (isNaN(entry.getTime())) {
         console.warn('Invalid entry_time:', entryTime);
         return 0;
       }
-      const entryEDT = new Date(entry.getTime() + 4 * 60 * 60000); // UTC to EDT
-      const diffMs = now - entryEDT;
-      return Math.max(0, Math.floor(diffMs / 60000));
+      // Convert UTC to local time by adjusting for EDT offset (-4 hours from UTC)
+      const entryLocal = new Date(entry.getTime() + (4 * 60 * 60000)); // Add 4 hours
+      const diffMs = now - entryLocal;
+      const waitMinutes = Math.max(0, Math.floor(diffMs / 60000));
+      console.log(`Entry: ${entryTime}, Local: ${entryLocal}, Now: ${now}, Wait: ${waitMinutes} min`);
+      return waitMinutes;
     };
 
     const vehiclesByZone = {
