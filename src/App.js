@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { createClient } from '@supabase/supabase-js';
 
 const supabaseUrl = 'https://zxuzthjvvscppppynioz.supabase.co';
-const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp4dXp0aGp2dnNjcHBwcHluaW96Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTgwMTc2MDIsImV4cCI6MjA3MzU9MzYwMn0.16AwInQgpJoFerd4g4SRGIuNFov-xJyxZZMs6COL-D4';
+const supabaseKey = '<PUBLIC_ANON_KEY>'; // keep this anon; never service_role in browser
 const supabase = createClient(supabaseUrl, supabaseKey);
 
 function App() {
@@ -10,51 +10,50 @@ function App() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    let isMounted = true;
+
     const fetchLiveQueues = async () => {
       const { data, error } = await supabase
         .from('queues')
         .select('*')
         .eq('status', 'active')
-        .order('zone')
-        .order('position');
+        .order('zone', { ascending: true })
+        .order('position', { ascending: true });
 
+      if (!isMounted) return;
       if (error) {
         console.error('Queues fetch error:', error);
-        setLoading(false);
-        return;
+      } else {
+        setVehicles(data || []);
       }
-
-      setVehicles(data || []);
       setLoading(false);
     };
 
     fetchLiveQueues();
 
-    const subscription = supabase
-      .channel('queues')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'queues' }, () => {
-        console.log('Queue change detected, refreshing');
-        fetchLiveQueues();
-      })
+    const channel = supabase
+      .channel('queues-active')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'queues', filter: 'status=eq.active' },
+        () => fetchLiveQueues()
+      )
       .subscribe();
 
     const interval = setInterval(fetchLiveQueues, 30000);
 
     return () => {
-      subscription.unsubscribe();
+      isMounted = false;
+      supabase.removeChannel(channel);
       clearInterval(interval);
     };
   }, []);
 
   const calculateWaitTime = (entryTime) => {
-    const now = new Date(); // EDT
-    const entry = new Date(entryTime); // UTC
-    if (isNaN(entry.getTime())) {
-      console.warn('Invalid entry_time:', entryTime);
-      return 0;
-    }
-    const entryEDT = new Date(entry.getTime() + 4 * 60 * 60000); // UTC to EDT
-    const diffMs = now - entryEDT;
+    const now = new Date();
+    const entry = new Date(entryTime);
+    if (isNaN(entry)) return 0;
+    const diffMs = now - entry;
     return Math.max(0, Math.floor(diffMs / 60000));
   };
 
@@ -74,10 +73,12 @@ function App() {
         {['holding', 'staging', 'blue_loading', 'red_loading'].map(zone => (
           <div key={zone} className="p-4 bg-white rounded-lg shadow">
             <h2 className="text-xl font-semibold capitalize">{zone.replace('_', ' ')}</h2>
-            <p className="mb-2">Occupancy: {vehiclesByZone[zone].length}/{zone === 'holding' ? '∞' : 7}</p>
-            <ul className="list-disc pl-5">
+            <p className="mb-2">
+              Occupancy: {vehiclesByZone[zone].length}/{zone === 'holding' ? '∞' : 7}
+            </p>
+            <ul className="list-disc pl-5 min-h-6">
               {vehiclesByZone[zone].length === 0 ? (
-                <li className="text-gray-500">&nbsp;</li>
+                <li className="text-gray-500">No vehicles</li>
               ) : (
                 vehiclesByZone[zone].map(v => (
                   <li key={v.id} className="my-1">
